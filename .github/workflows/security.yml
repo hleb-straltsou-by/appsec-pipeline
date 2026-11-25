@@ -1,0 +1,100 @@
+# Security pipeline, stage 1: SAST (Semgrep) + secrets (gitleaks).
+#
+# Policy (week 4, Monday notes):
+#   pull_request  -> scan only what the PR adds; FAIL on new findings (blocks the merge)
+#   push to main  -> full scan; REPORT to the Security tab, don't fail (existing debt is tracked, not blocking)
+#
+# Supply-chain hygiene (week 4, Tuesday notes): actions pinned by commit SHA, tool versions pinned,
+# gitleaks binary verified against the release checksums, minimal GITHUB_TOKEN permissions.
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SEMGREP_VERSION: "1.187.0"
+  GITLEAKS_VERSION: "8.30.1"
+
+jobs:
+  semgrep:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # upload SARIF to code scanning
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0       # the PR base commit must be present for --baseline-commit
+
+      - name: Install Semgrep
+        run: pipx install "semgrep==${SEMGREP_VERSION}"
+
+      - name: Scan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            echo "Pull request: reporting only findings introduced after $BASE_SHA; new findings fail the check"
+            semgrep scan --config p/default --metrics=off --error \
+              --baseline-commit "$BASE_SHA" --sarif-output=semgrep.sarif
+          else
+            echo "Full scan: report everything, don't fail"
+            semgrep scan --config p/default --metrics=off --sarif-output=semgrep.sarif
+          fi
+
+      - name: Upload to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  gitleaks:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0       # full history: a secret deleted later is still in git
+
+      - name: Install gitleaks (checksum verified)
+        run: |
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfLO "$base/$tarball"
+          curl -sSfLO "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          sha256sum --check --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          tar -xzf "$tarball" gitleaks
+          ./gitleaks version
+
+      - name: Scan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            echo "Pull request: scanning only the PR commits; a secret fails the check"
+            ./gitleaks git --log-opts="${BASE_SHA}..${HEAD_SHA}" --redact \
+              --report-format sarif --report-path gitleaks.sarif
+          else
+            echo "Full history scan: report, don't fail"
+            ./gitleaks git --redact --exit-code 0 \
+              --report-format sarif --report-path gitleaks.sarif
+          fi
+
+      - name: Upload to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
