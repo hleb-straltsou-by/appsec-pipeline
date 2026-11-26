@@ -1,11 +1,12 @@
-# Security pipeline, stage 1: SAST (Semgrep) + secrets (gitleaks).
+# Security pipeline: SAST (Semgrep), secrets (gitleaks), image + Dockerfile (Trivy), SBOM (Syft).
 #
 # Policy (week 4, Monday notes):
 #   pull_request  -> scan only what the PR adds; FAIL on new findings (blocks the merge)
 #   push to main  -> full scan; REPORT to the Security tab, don't fail (existing debt is tracked, not blocking)
+#   image job     -> report everything; fail only on CRITICAL vulnerabilities that have a fix
 #
 # Supply-chain hygiene (week 4, Tuesday notes): actions pinned by commit SHA, tool versions pinned,
-# gitleaks binary verified against the release checksums, minimal GITHUB_TOKEN permissions.
+# downloaded binaries verified against release checksums, minimal GITHUB_TOKEN permissions.
 name: security
 
 on:
@@ -20,6 +21,8 @@ permissions:
 env:
   SEMGREP_VERSION: "1.187.0"
   GITLEAKS_VERSION: "8.30.1"
+  TRIVY_VERSION: "0.76.2"
+  SYFT_VERSION: "1.57.1"     # cooldown: newest release older than 14 days
 
 jobs:
   semgrep:
@@ -98,3 +101,71 @@ jobs:
         with:
           sarif_file: gitleaks.sarif
           category: gitleaks
+
+  image:
+    name: Image (Trivy + Syft SBOM)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      IMAGE: appsec-pipeline:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build image
+        run: docker build -t "$IMAGE" .
+
+      - name: Install Trivy and Syft (checksums verified)
+        run: |
+          get() {  # repo, version, tarball, checksums file
+            curl -sSfLO "https://github.com/$1/releases/download/v$2/$3"
+            curl -sSfLO "https://github.com/$1/releases/download/v$2/$4"
+            sha256sum --check --ignore-missing "$4"
+            tar -xzf "$3" "$(basename "$1")"
+          }
+          get aquasecurity/trivy "$TRIVY_VERSION" "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" "trivy_${TRIVY_VERSION}_checksums.txt"
+          get anchore/syft "$SYFT_VERSION" "syft_${SYFT_VERSION}_linux_amd64.tar.gz" "syft_${SYFT_VERSION}_checksums.txt"
+          ./trivy --version | head -1 && ./syft version | grep -m1 Version
+
+      - name: SBOM (Syft, CycloneDX)
+        run: ./syft "$IMAGE" -o cyclonedx-json=sbom.cdx.json && jq '.components | length' sbom.cdx.json
+
+      - name: Trivy — image vulnerabilities (report all)
+        run: ./trivy image --scanners vuln --format sarif --output trivy-image.sarif "$IMAGE"
+
+      - name: Trivy — Dockerfile misconfigurations (report all)
+        run: ./trivy config --format sarif --output trivy-config.sarif .
+
+      - name: Trivy — rescan from the SBOM (what a nightly job would do, no rebuild)
+        run: |
+          {
+            echo '### Vulnerabilities from the SBOM (HIGH, CRITICAL)'
+            echo '```'
+            ./trivy sbom --severity HIGH,CRITICAL --format table sbom.cdx.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Gate — fail on fixable CRITICAL
+        run: ./trivy image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 "$IMAGE"
+
+      - name: Upload SARIF — image
+        if: always()
+        uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+      - name: Upload SARIF — config
+        if: always()
+        uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-config
+
+      - name: Keep the SBOM
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json
