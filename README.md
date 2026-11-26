@@ -11,8 +11,8 @@ tooling required.
 |---|---|---|
 | SAST | Semgrep (`p/default`) | ✅ |
 | Secrets | gitleaks (full git history) | ✅ |
-| Image + IaC | Trivy | planned |
-| SBOM | Syft (CycloneDX) | planned |
+| Image + Dockerfile | Trivy (`image`, `config`) | ✅ |
+| SBOM | Syft (CycloneDX) → artifact; Trivy rescans the SBOM | ✅ |
 | DAST | OWASP ZAP baseline against the service started in CI | planned |
 | Custom rule | Own Semgrep rule for a real bug class | planned |
 
@@ -24,13 +24,15 @@ Findings from every tool go to **Security → Code scanning** as SARIF.
 |---|---|---|
 | Pull request | Only what the PR adds (Semgrep `--baseline-commit`, gitleaks on the PR commits) | **Check fails** — blocks the merge |
 | Push to `main` | Full code and full git history | Reported to the Security tab, **doesn't fail** |
+| Image (any event) | Built image: OS + Python packages; Dockerfile | Everything reported; **fails only on fixable CRITICAL** |
 
 Why: existing findings are debt to triage, not a reason to block every PR. If every PR inherits 300 old findings, teams
 switch the scanner off within a month. The gate is on *new* problems only.
 
 ## Supply-chain hygiene in the workflow
 - Third-party actions pinned by **commit SHA**, not by tag (tags can be moved).
-- Tool versions pinned; the gitleaks binary is verified against the release checksums before it runs.
+- Tool versions pinned with a **cooldown** (newest release older than 14 days); every downloaded binary
+  (gitleaks, Trivy, Syft) is verified against the release checksums before it runs.
 - `GITHUB_TOKEN` has `contents: read` by default; only the jobs that upload SARIF get `security-events: write`.
 
 ## The demo service
