@@ -63,6 +63,16 @@ def search_notes_safe():
     return jsonify([dict(r) for r in rows])
 
 
+@app.get("/notes/by-title")
+def notes_by_title():
+    tenant = request.args.get("tenant", "")
+    title = request.args.get("title", "")
+    # VULN-4 (PR exercise): new SQL injection. The PR gate must fail on this line only.
+    with db() as conn:
+        rows = conn.execute(f"SELECT id, title FROM notes WHERE tenant = '{tenant}' AND title = '{title}'").fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
 @app.get("/diag/ping")
 def ping():
     host = request.args.get("host", "127.0.0.1")
