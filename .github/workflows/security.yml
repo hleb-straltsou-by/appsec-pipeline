@@ -1,9 +1,11 @@
-# Security pipeline: SAST (Semgrep), secrets (gitleaks), image + Dockerfile (Trivy), SBOM (Syft).
+# Security pipeline: SAST (Semgrep), secrets (gitleaks), image + Dockerfile (Trivy), SBOM (Syft), passive DAST (ZAP).
+# Active DAST runs nightly in dast-nightly.yml.
 #
 # Policy (week 4, Monday notes):
 #   pull_request  -> scan only what the PR adds; FAIL on new findings (blocks the merge)
 #   push to main  -> full scan; REPORT to the Security tab, don't fail (existing debt is tracked, not blocking)
 #   image job     -> report everything; fail only on CRITICAL vulnerabilities that have a fix
+#   dast job      -> passive only (no attack payloads); fail only on rules marked FAIL in .zap/rules.tsv
 #
 # Supply-chain hygiene (week 4, Tuesday notes): actions pinned by commit SHA, tool versions pinned,
 # downloaded binaries verified against release checksums, minimal GITHUB_TOKEN permissions.
@@ -23,6 +25,7 @@ env:
   GITLEAKS_VERSION: "8.30.1"
   TRIVY_VERSION: "0.76.2"
   SYFT_VERSION: "1.57.1"     # cooldown: newest release older than 14 days
+  ZAP_IMAGE: "ghcr.io/zaproxy/zaproxy:2.16.1@sha256:7840969c7c9fead565bf9734b12f49f6886db90b1d35b1f74d79710bbd081dab"
 
 jobs:
   semgrep:
@@ -169,3 +172,68 @@ jobs:
         with:
           name: sbom-cyclonedx
           path: sbom.cdx.json
+
+  dast:
+    name: DAST (ZAP baseline)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Start the service
+        run: |
+          docker build -t app:dast .
+          docker run -d --name app -p 8080:8080 app:dast
+          for i in $(seq 1 30); do curl -sf http://localhost:8080/health && exit 0; sleep 1; done
+          docker logs app; exit 1
+
+      - name: Prepare ZAP workdir
+        run: |
+          mkdir zapwrk && cp .zap/rules.tsv api/openapi.yaml zapwrk/ && chmod -R a+rwX zapwrk
+          docker pull "$ZAP_IMAGE"
+
+      - name: ZAP baseline — crawler only (shows what a spider finds on a JSON API)
+        run: |
+          docker run --rm --network host -v "$PWD/zapwrk:/zap/wrk:rw" "$ZAP_IMAGE" \
+            zap-baseline.py -t http://localhost:8080/ -c rules.tsv -I \
+            -r baseline.html -J baseline.json || echo "baseline exit code $?"
+
+      - name: ZAP API scan, passive (-S) — every endpoint from the OpenAPI spec, no attack payloads
+        run: |
+          set +e
+          docker run --rm --network host -v "$PWD/zapwrk:/zap/wrk:rw" "$ZAP_IMAGE" \
+            zap-api-scan.py -t openapi.yaml -f openapi -S -c rules.tsv -I \
+            -r api-passive.html -J api-passive.json
+          echo "ZAP_RC=$?" >> "$GITHUB_ENV"
+
+      - name: Summary
+        if: always()
+        run: |
+          summarise() {
+            echo "### $1"
+            echo '| Risk | Alert | Rule | URLs |'
+            echo '|---|---|---|---|'
+            jq -r '[.site[].alerts[]] | sort_by(-(.riskcode|tonumber))[] | "| \(.riskdesc|split(" ")[0]) | \(.alert) | \(.pluginid) | \(.count) |"' "zapwrk/$2" 2>/dev/null || echo "| — | no report | | |"
+            echo
+          }
+          {
+            echo "URLs the crawler found: $(jq '[.site[].alerts[].instances[].uri] | unique | length' zapwrk/baseline.json 2>/dev/null || echo '?')"
+            echo
+            summarise "Baseline (crawler)" baseline.json
+            summarise "API scan, passive" api-passive.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: zap-reports-pr
+          path: |
+            zapwrk/*.html
+            zapwrk/*.json
+
+      - name: Gate — fail on rules marked FAIL
+        run: |
+          # zap exit codes: 0 clean, 1 at least one FAIL, 2 warnings only (ignored with -I), 3 error
+          if [ "$ZAP_RC" = "1" ] || [ "$ZAP_RC" = "3" ]; then echo "ZAP exit code $ZAP_RC"; exit 1; fi

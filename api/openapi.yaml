@@ -1,0 +1,39 @@
+openapi: 3.0.3
+info:
+  title: Notes API (demo, deliberately vulnerable)
+  version: "1.0"
+  description: >
+    Describes every endpoint so DAST can reach them. A JSON API has no HTML links, so a crawler alone finds almost
+    nothing — this spec is how ZAP learns the attack surface.
+servers:
+  - url: http://localhost:8080
+paths:
+  /health:
+    get:
+      responses: { "200": { description: OK } }
+  /notes/search:
+    get:
+      summary: Search notes (VULN-1, SQL injection)
+      parameters:
+        - { name: tenant, in: query, schema: { type: string, example: acme } }
+        - { name: q, in: query, schema: { type: string, example: plan } }
+      responses: { "200": { description: Matching notes } }
+  /notes/search-safe:
+    get:
+      summary: Search notes, parameterised query
+      parameters:
+        - { name: tenant, in: query, schema: { type: string, example: acme } }
+        - { name: q, in: query, schema: { type: string, example: plan } }
+      responses: { "200": { description: Matching notes } }
+  /diag/ping:
+    get:
+      summary: Ping a host (VULN-2, command injection)
+      parameters:
+        - { name: host, in: query, schema: { type: string, example: 127.0.0.1 } }
+      responses: { "200": { description: Ping output } }
+  /diag/ping-safe:
+    get:
+      summary: Ping a host, argument list without a shell
+      parameters:
+        - { name: host, in: query, schema: { type: string, example: 127.0.0.1 } }
+      responses: { "200": { description: Ping output } }
