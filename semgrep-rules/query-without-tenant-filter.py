@@ -1,4 +1,4 @@
-# Tests for query-without-tenant-filter. Run: semgrep --test .semgrep/
+# Tests for query-without-tenant-filter. Run: semgrep --test semgrep-rules/
 # Each "ruleid" line must be reported on the next line, each "ok" line must not.
 
 
@@ -39,4 +39,4 @@ def good(conn, tenant, note_id, title):
 def exception(conn):
     # Intentional cross-tenant query, suppressed with a reason.
     # ok: query-without-tenant-filter
-    conn.execute("SELECT COUNT(*) FROM notes")  # nosemgrep: query-without-tenant-filter -- seeding check, no data returned
+    conn.execute("SELECT COUNT(*) FROM notes")  # nosemgrep: semgrep-rules.query-without-tenant-filter -- seeding check, no data returned

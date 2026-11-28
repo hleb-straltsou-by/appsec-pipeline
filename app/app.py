@@ -29,7 +29,7 @@ def init_db():
     with db() as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, tenant TEXT, title TEXT, body TEXT)")
         # Intentionally cross-tenant: a seeding check that returns no tenant data.
-        if conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0:  # nosemgrep: query-without-tenant-filter
+        if conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0:  # nosemgrep: semgrep-rules.query-without-tenant-filter
             conn.executemany(
                 "INSERT INTO notes (tenant, title, body) VALUES (?, ?, ?)",
                 [("acme", "Q4 plan", "internal"), ("acme", "Hiring", "2 roles"), ("globex", "Secret", "other tenant")],

@@ -6,8 +6,8 @@ rules:
       Query on a tenant-owned table without a tenant filter. In a pooled multi-tenant service every read, update and
       delete of tenant data must be scoped to the tenant from the verified identity, otherwise one tenant can reach
       another tenant's rows (cross-tenant BOLA). Add `tenant = ?` bound to the caller's tenant. If the query is
-      intentionally cross-tenant (seeding, admin job), mark it with `# nosemgrep: query-without-tenant-filter` and a
-      reason.
+      intentionally cross-tenant (seeding, admin job), mark it with `# nosemgrep: semgrep-rules.query-without-tenant-filter`
+      and a reason.
     metadata:
       category: security
       cwe: "CWE-639: Authorization Bypass Through User-Controlled Key"
