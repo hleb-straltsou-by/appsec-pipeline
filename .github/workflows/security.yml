@@ -42,17 +42,23 @@ jobs:
       - name: Install Semgrep
         run: pipx install "semgrep==${SEMGREP_VERSION}"
 
+      - name: Test custom rules (each rule ships with its own test cases)
+        run: |
+          semgrep --test semgrep-rules/ | tee rule-tests.txt
+          # "No unit tests found" also exits 0 — a test run that tests nothing must fail
+          grep -q "All tests passed" rule-tests.txt
+
       - name: Scan
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ -n "$BASE_SHA" ]; then
             echo "Pull request: reporting only findings introduced after $BASE_SHA; new findings fail the check"
-            semgrep scan --config p/default --metrics=off --error \
+            semgrep scan --config p/default --config semgrep-rules/ --exclude semgrep-rules --metrics=off --error \
               --baseline-commit "$BASE_SHA" --sarif-output=semgrep.sarif
           else
             echo "Full scan: report everything, don't fail"
-            semgrep scan --config p/default --metrics=off --sarif-output=semgrep.sarif
+            semgrep scan --config p/default --config semgrep-rules/ --exclude semgrep-rules --metrics=off --sarif-output=semgrep.sarif
           fi
 
       - name: Upload to code scanning
