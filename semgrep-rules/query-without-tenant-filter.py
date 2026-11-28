@@ -36,7 +36,5 @@ def good(conn, tenant, note_id, title):
     conn.execute("INSERT INTO notes (tenant, title, body) VALUES (?, ?, ?)", (tenant, title, ""))
 
 
-def exception(conn):
-    # Intentional cross-tenant query, suppressed with a reason.
-    # ok: query-without-tenant-filter
-    conn.execute("SELECT COUNT(*) FROM notes")  # nosemgrep: semgrep-rules.query-without-tenant-filter -- seeding check, no data returned
+# Suppression (nosemgrep) is not tested here: in `--test` the rule id has no path prefix, in a scan it is
+# `semgrep-rules.query-without-tenant-filter`. The scan of app/app.py checks the real suppression.
