@@ -28,7 +28,8 @@ def db():
 def init_db():
     with db() as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, tenant TEXT, title TEXT, body TEXT)")
-        if conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0:
+        # Intentionally cross-tenant: a seeding check that returns no tenant data.
+        if conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0:  # nosemgrep: query-without-tenant-filter
             conn.executemany(
                 "INSERT INTO notes (tenant, title, body) VALUES (?, ?, ?)",
                 [("acme", "Q4 plan", "internal"), ("acme", "Hiring", "2 roles"), ("globex", "Secret", "other tenant")],
@@ -61,6 +62,16 @@ def search_notes_safe():
             "SELECT id, title FROM notes WHERE tenant = ? AND title LIKE ?", (tenant, f"%{q}%")
         ).fetchall()
     return jsonify([dict(r) for r in rows])
+
+
+@app.get("/notes/<int:note_id>")
+def get_note(note_id):
+    tenant = request.args.get("tenant", "")  # stands in for the tenant from the verified token
+    # VULN-6: cross-tenant BOLA. Parameterised (no SQL injection, p/default stays silent), but the query ignores the
+    # caller's tenant: acme can read globex's note by its id. Caught only by the custom rule.
+    with db() as conn:
+        row = conn.execute("SELECT id, tenant, title, body FROM notes WHERE id = ?", (note_id,)).fetchone()
+    return (jsonify(dict(row)), 200) if row else ({"error": "not found"}, 404)
 
 
 @app.get("/diag/ping")

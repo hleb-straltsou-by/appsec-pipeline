@@ -1,0 +1,3 @@
+# Rule test fixtures contain deliberate violations; they are tested with `semgrep --test`, not scanned.
+.semgrep/
+.git/
