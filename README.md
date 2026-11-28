@@ -60,7 +60,7 @@ switch the scanner off within a month. The gate is on *new* problems only.
 | VULN-1 | SQL injection (cross-tenant read) | `/notes/search` | `/notes/search-safe` | Semgrep |
 | VULN-2 | Command injection (`shell=True`) | `/diag/ping` | `/diag/ping-safe` | Semgrep |
 | VULN-3 | Hardcoded secret | `PAYMENTS_API_KEY` | — (env / secret manager) | gitleaks |
-| VULN-6 | Cross-tenant read by id (BOLA): parameterised, so no injection — but ignores the caller's tenant | `/notes/<id>` | — | **custom rule only** |
+| VULN-6 | Cross-tenant read by id (BOLA): parameterised, so no injection — but ignored the caller's tenant | `/notes/<id>` before PR #5 | `/notes/<id>` (fixed in place: `tenant = ? AND id = ?`) | **custom rule only** |
 
 The fixed endpoints must **not** be reported — a quick check for false positives.
 

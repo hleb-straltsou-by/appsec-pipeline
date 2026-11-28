@@ -67,10 +67,13 @@ def search_notes_safe():
 @app.get("/notes/<int:note_id>")
 def get_note(note_id):
     tenant = request.args.get("tenant", "")  # stands in for the tenant from the verified token
-    # VULN-6: cross-tenant BOLA. Parameterised (no SQL injection, p/default stays silent), but the query ignores the
-    # caller's tenant: acme can read globex's note by its id. Caught only by the custom rule.
+    # VULN-6 (fixed): the query was parameterised but ignored the caller's tenant, so acme could read globex's note by
+    # id — caught only by the custom rule query-without-tenant-filter. Fix: scope by tenant. Another tenant's id now
+    # returns 404, not 403, so the response doesn't confirm that the note exists.
     with db() as conn:
-        row = conn.execute("SELECT id, tenant, title, body FROM notes WHERE id = ?", (note_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id, tenant, title, body FROM notes WHERE tenant = ? AND id = ?", (tenant, note_id)
+        ).fetchone()
     return (jsonify(dict(row)), 200) if row else ({"error": "not found"}, 404)
 
 
