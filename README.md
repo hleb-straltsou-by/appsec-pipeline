@@ -3,7 +3,7 @@
 A security pipeline for a small service, built step by step on GitHub Actions. Every check runs in CI — no local
 tooling required.
 
-> ⚠️ `app/` is **deliberately vulnerable** (marked `VULN-1…3`). Don't deploy it. The secret in it is fake.
+> ⚠️ `app/` is **deliberately vulnerable** (marked `VULN-1…6`). Don't deploy it. The secret in it is fake.
 
 ## Pipeline
 
@@ -15,7 +15,7 @@ tooling required.
 | SBOM | Syft (CycloneDX) → artifact; Trivy rescans the SBOM | ✅ |
 | DAST, passive (PR) | OWASP ZAP: crawler baseline + API scan in safe mode (`-S`) over `api/openapi.yaml` | ✅ |
 | DAST, active (nightly) | OWASP ZAP API scan with attack payloads → tracking issue | ✅ |
-| Custom rule | Own Semgrep rule for a real bug class | planned |
+| Custom rule | `query-without-tenant-filter` (cross-tenant BOLA), with its own tests | ✅ |
 
 Findings from every tool go to **Security → Code scanning** as SARIF.
 
@@ -60,8 +60,25 @@ switch the scanner off within a month. The gate is on *new* problems only.
 | VULN-1 | SQL injection (cross-tenant read) | `/notes/search` | `/notes/search-safe` | Semgrep |
 | VULN-2 | Command injection (`shell=True`) | `/diag/ping` | `/diag/ping-safe` | Semgrep |
 | VULN-3 | Hardcoded secret | `PAYMENTS_API_KEY` | — (env / secret manager) | gitleaks |
+| VULN-6 | Cross-tenant read by id (BOLA): parameterised, so no injection — but ignores the caller's tenant | `/notes/<id>` | — | **custom rule only** |
 
 The fixed endpoints must **not** be reported — a quick check for false positives.
+
+## Custom Semgrep rule
+
+`semgrep-rules/query-without-tenant-filter.yaml` — a rule for *our* architecture, not a generic bug: in a pooled
+multi-tenant service every query on a tenant-owned table must filter by the caller's tenant. `p/default` can't know
+that: a parameterised `SELECT ... WHERE id = ?` is perfectly safe SQL and still lets one tenant read another's rows.
+
+- **Tests ship with the rule:** `semgrep-rules/query-without-tenant-filter.py` (`# ruleid:` must match, `# ok:` must not),
+  run in CI with `semgrep --test` before the scan. A test run that finds no tests also exits 0 — the step checks for
+  "All tests passed" so an empty run fails.
+- **Exceptions are explicit:** intentionally cross-tenant queries (seeding, admin jobs) carry
+  `# nosemgrep: semgrep-rules.query-without-tenant-filter` with a reason. In a scan the rule id gets the folder prefix;
+  a suppression with the short id silently doesn't apply.
+- **Known limits (false negatives):** checks string literals only — a query built in a variable or f-string (VULN-1) is
+  not inspected; it checks that *a* tenant filter exists, not that the tenant comes from the verified token; the list of
+  tenant-owned tables is maintained by hand. Stronger enforcement sits below the code: RLS, scoped DB credentials.
 
 ## Exercise: does the gate work?
 
